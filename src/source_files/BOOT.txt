@@ -1,0 +1,58 @@
+# 0x100
+jump [.main]
+
+_fn_str.txt
+
+$kernel "kernel"
+
+.main:
+    setief
+    cpy 0x1, ax     ;   disk write second block to address 0x300
+    out 0x2, ax
+    cpy 0x300, ax
+    out 0x2, ax
+    hlt             ;   wait for finish (using previous ISR)
+
+    push $kernel
+    sub 32,ax       ;   helpful to have increment at start of loop, so undo it first time
+.knl_search_loop:
+    add 32,ax
+    dsub 0x500, ax  ;   don't access this, it's the 17th entry which don't exist
+    jzro [.knl_search_unsuccessful]
+
+    push ax
+    call [.fn_strcmp]
+    pop ax
+    dsub 0,im
+    jzro [.knl_search_loop]
+
+    ; here search was successful, [ax] is kernel entry
+    cpy [ax + 24], bx   ;   start block
+    cpy [ax + 28], cx   ;   byte length
+
+    add 511,cx          ;   ceiling division
+    div 512,cx
+    add bx,cx           ;   cx = block to stop after
+    
+    cpy 0x2000, ax      ;   first kernel address
+    dec bx
+    sub 512,ax
+.knl_read_loop:
+    inc bx
+    add 512,ax
+
+    setief
+    out 0x2, bx         ;   disk write bx'th block
+    out 0x2, ax
+    hlt
+    
+    dsub cx,bx
+    jnzr [.knl_read_loop]
+
+    jump [0x2000]
+
+
+
+.knl_search_unsuccessful:
+    clrief
+    hlt

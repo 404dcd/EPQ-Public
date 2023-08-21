@@ -1,0 +1,268 @@
+; [bp + 8] ASCII code
+; clobbers JX KX IM
+.fn_display_internal_pchar:
+    push bp
+    cpy sp,bp
+
+    ; correct charcode
+    cpy [bp + 8], kx
+    dsub 0x0a, kx
+    jnzr [.pchar_checks]    ;   newline
+
+    call [.fn_display_newline]
+    cpy bp,sp
+    pop bp
+    ret
+
+.pchar_checks:
+    dsub 0x20, kx
+    jbel [.pchar_bad]
+    dsub 0x7f, kx
+    jabv [.pchar_bad]
+    jump [.pchar_good]
+.pchar_bad:
+    cpy 0x7f, kx
+.pchar_good:
+    sub 0x20, kx
+    mul 48, kx
+    add 0xC0408000, kx
+    push kx                 ;   [bp-4] = font reading byte
+    push [0xC0440008]       ;   [bp-8] = pixel index to write
+
+    cpy zr,kx
+    dec kx
+.pchar_row_iter:            ;   kx 0..=7
+    inc kx
+
+    cpy zr,jx
+    dec jx
+    .pchar_col_iter:        ;   jx 0..=5
+        inc jx
+        push jx
+
+        cpy [bp-4], jx
+        dsub.8 zr,[jx]
+        jzro [.pchar_px_else]
+
+        cpy [bp-8], jx
+        div 8,jx                ;   jx=byte im=bit
+        add [0xC044000C], jx    ;   screen buffer prt
+        push jx                 ;   [sp] = screen page ptr
+        cpy 0x80, jx
+        bsr im, jx
+        pop im                  ;   im = screen page ptr
+
+        orr.8 jx, [im]           ;   mask jx into [im]
+        jump [.pchar_px_endif]
+
+    .pchar_px_else:
+        cpy [bp-8], jx
+        div 8,jx                ;   jx=byte im=bit
+        add [0xC044000C], jx    ;   screen buffer prt
+        push jx                 ;   [sp] = screen page ptr
+        cpy 0x80, jx
+        bsr im, jx
+        not jx
+        pop im                  ;   im = screen page ptr
+
+        and.8 jx, [im]          ;   mask jx out of [im]
+
+    .pchar_px_endif:
+        inc [bp-8]
+        inc [bp-4]
+        pop jx
+        dsub 5,jx
+        jnzr [.pchar_col_iter]
+
+    sub 6, [bp-8]
+    add 256, [bp-8]
+    dsub 7,kx
+    jnzr [.pchar_row_iter]
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+
+; [bp + 8] ASCII code
+; clobbers JX KX IM
+.fn_display_pchar:          ; [0xC0440008] pixel index to write
+    push bp
+    cpy sp,bp
+    
+    push [0xC044000C]       ;   translate virtual [0xC044000C] to physical [bp-4]
+    call [.fn_map_translate]
+    pop zr
+    push im
+
+
+    dsub 0x0a, [bp + 8]     ;   newline code
+    jnzr [.pchar_nonewline]
+
+    cpy [0xC0440008], kx
+    and 0xffffff00, kx      ;   send pixel index to the start
+    add 2048, kx            ;   8 rows of 256
+    cpy kx, [0xC0440008]
+    dsub 32768,kx
+    jnzr [.pchar_done]    ;   don't need to bubble if we're before the end
+    
+    sub 2048,[0xC0440008]
+    call [.fn_display_bubble]
+
+    cpy [bp-4], im
+    out 0x4, im             ;   tell screen about first buffer we wrote
+
+    add 0x1000, [0xC044000C]
+    dsub 0xC0402000, [0xC044000C]
+    jnzr [.pchar_switch_newline_skip]
+    sub 0x2000, [0xC044000C]
+.pchar_switch_newline_skip:
+    call [.fn_display_bubble]
+    jump [.pchar_done]
+
+
+.pchar_nonewline
+    push [bp + 8]
+    call [.fn_display_internal_pchar]
+
+    cpy [bp-4], im
+    out 0x4, im             ;   tell screen about first buffer we wrote
+
+    add 0x1000, [0xC044000C]
+    dsub 0xC0402000, [0xC044000C]
+    jnzr [.pchar_switch_skip]
+    sub 0x2000, [0xC044000C]
+.pchar_switch_skip:
+    call [.fn_display_internal_pchar]
+
+    add 6, [0xC0440008]     ;   advance char
+    cpy [0xC0440008], kx
+    div 256, kx
+    dsub 252, im
+    jnzr [.pchar_done]
+    
+    ; here at the end of a row
+    sub 252, [0xC0440008]
+    add 2048, [0xC0440008]          ;   8 rows of 256
+    dsub 32768,[0xC0440008]
+    jnzr [.pchar_done]    ;   don't need to bubble if we're before the end
+    sub 2048,[0xC0440008]
+    
+    call [.fn_display_bubble]
+    add 0x1000, [0xC044000C]
+    dsub 0xC0402000, [0xC044000C]
+    jnzr [.pchar_switch_skip2]
+    sub 0x2000, [0xC044000C]
+.pchar_switch_skip2:
+    call [.fn_display_bubble]
+    add 0x1000, [0xC044000C]
+    dsub 0xC0402000, [0xC044000C]
+    jnzr [.pchar_done]
+    sub 0x2000, [0xC044000C]
+
+.pchar_done:
+    cpy bp,sp
+    pop bp
+    ret
+
+
+
+; clobbers JX KX IM
+.fn_display_backspace:
+    push bp
+    cpy sp,bp
+
+    push [0xC044000C]       ;   translate virtual [0xC044000C] to physical [bp-4]
+    call [.fn_map_translate]
+    pop zr
+    push im
+
+    cpy [0xC0440008], jx
+    dsub zr, jx
+    jzro [.backspace_done]          ;   don't backspace past start of screen
+    div 256, jx
+    dsub zr, im
+    jnzr [.backspace_skip_backrow]
+
+    sub 2048,[0xC0440008]           ;   need to move up a row
+    add 252,[0xC0440008]
+.backspace_skip_backrow:
+    sub 6,[0xC0440008]
+
+    push 0x20
+    call [.fn_display_internal_pchar]
+
+    cpy [bp-4], im
+    out 0x4, im             ;   tell screen about first buffer we wrote
+
+    add 0x1000, [0xC044000C]
+    dsub 0xC0402000, [0xC044000C]
+    jnzr [.backspace_switch_skip]
+    sub 0x2000, [0xC044000C]
+.backspace_switch_skip:
+    call [.fn_display_internal_pchar]
+
+.backspace_done:
+    cpy bp,sp
+    pop bp
+    ret
+
+
+
+; clobbers IM
+.fn_display_bubble:
+    push bp
+    cpy sp,bp
+
+    ;   move each row, 32 bytes, back by 8
+    cpy [0xC044000C], im
+    push im
+    add 0xeff, [sp]
+    dec im
+.bubble_mv_loop:
+    inc im
+    
+    cpy.8 [im+256], [im]
+
+    dsub [sp],im
+    jnzr [.bubble_mv_loop]
+
+    add 0x100, [sp]
+.bubble_zr_loop:
+    inc im
+
+    cpy.8 zr, [im]
+
+    dsub [sp],im
+    jnzr [.bubble_zr_loop]
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; clobbers JX KX IM
+.fn_display_newline:
+    push bp
+    cpy sp,bp
+
+    push [0xC044000C]       ;   translate virtual [0xC044000C] to physical [bp-4]
+    call [.fn_map_translate]
+    pop zr
+    push im
+
+    cpy [0xC0440008], kx
+    and 0xffffff00, kx      ;   send pixel index to the start
+    add 2048, kx            ;   8 rows of 256
+    cpy kx, [0xC0440008]
+    dsub 32768,kx
+    jnzr [.newline_done]    ;   don't need to bubble if we're before the end
+    
+    sub 2048,[0xC0440008]
+    call [.fn_display_bubble]
+
+.newline_done:
+    cpy bp,sp
+    pop bp
+    ret

@@ -1,0 +1,149 @@
+.handle_exc0:
+    cpy $exc0, ax
+    cpy 0, bx
+    jump [.handle_exc_main]
+
+.handle_exc1:
+    cpy $exc1, ax
+    cpy 1, bx
+    jump [.handle_exc_main]
+
+.handle_exc2:
+    cpy $exc2, ax
+    cpy 2, bx
+    jump [.handle_exc_main]
+
+.handle_exc3:
+    cpy $exc3, ax
+    cpy 3, bx
+    jump [.handle_exc_main]
+
+.handle_exc4:
+    cpy $exc4, ax
+    cpy 4, bx
+    jump [.handle_exc_main]
+
+.handle_exc5:
+    cpy $exc5, ax
+    cpy 5, bx
+    jump [.handle_exc_main]
+    
+.handle_exc6:
+    cpy $exc6, ax
+    cpy 6, bx
+    jump [.handle_exc_main]
+
+
+.handle_exc_main:
+    cpy 0xC0420000, bp      ;   switch to a kernel stack
+    cpy bp, sp
+    push ax
+    call [.fn_out_str]
+    pop zr
+
+    dsub 0xC0402000, [0xC0440000]    ;   proc meta stack
+    jnzr [.kill_proc]
+    hlt                     ;   end emulation, kernel has had exception
+
+.kill_proc:
+    push bx
+    push zr     ;   fake push the flgr
+    push zr     ;   fake push the return ptr
+    jump [.syscall_exit]
+
+
+.handle_int10:  ;   key pressed
+    push jx
+    push kx
+    push im
+
+    push $int10                 ;   tell serial port
+    call [.fn_out_str]
+    pop zr
+    inp 3,im
+    push im
+    call [.fn_out_uint]
+    pop im
+
+    cpy [0xC0440010], kx        ;   convert to ASCII
+    cpy.8 [0xC0410000 + kx + im*2], im
+    zrx.8 im
+    cpy zr, [0xC0440010]
+
+    dsub 255, im                ;   if shift key pressed
+    jnzr [.int10_noshift]
+    inc [0xC0440010]
+    jump [.int10_done]
+
+.int10_noshift:
+    dsub 8, im                  ;   if backspace pressed
+    jnzr [.int10_nobackspace]
+    call [.fn_display_backspace]
+    
+    cpy [0xC0440014],im
+    dec im
+    dsub 0xffffffff,im
+    jnzr [.int10_can_bs]
+    inc im
+
+.int10_can_bs:
+    cpy.8 zr, [im + 0xC0411000]
+    cpy im, [0xC0440014]
+    jump [.int10_done]
+
+.int10_nobackspace: 
+    push im                     ;   otherwise we can draw it
+    call [.fn_display_pchar]
+    pop im
+
+    dsub 0x0a,im                ;   if newline
+    jnzr [.int10_nonewline]
+    
+    cpy [0xC0440018],kx         ;   fetch newline hook
+    dsub zr,kx
+    jnzr [kx]                   ;   jump if we've got one
+
+    cpy zr,[0xC0440014]         ;   otherwise clear the buffer
+    cpy.8 zr, [0xC0411000]
+    jump [.int10_done]
+
+.int10_nonewline:
+    cpy [0xC0440014],kx         ;   append to string input buffer
+    cpy.8 im, [kx + 0xC0411000]
+    inc kx
+    cpy.8 zr, [kx + 0xC0411000]
+    cpy kx,[0xC0440014]
+
+.int10_done:
+    pop im
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+.handle_int12:  ;   data read
+    push jx
+    push kx
+    push im
+
+    push $int12
+    call [.fn_out_str]
+    pop zr
+    
+    pop im
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+$exc0 "K: e divide by zero\n"
+$exc1 "K: e invalid opcode\n"
+$exc2 "K: e illegal instruction\n"
+$exc3 "K: e unpaged address\n"
+$exc4 "K: e null pointer deref\n"
+$exc5 "K: e address beyond max\n"
+$exc6 "K: e unregistered intrpt\n"
+$int10 "K: i key pressed: "
+$int12 "K: i data read\n"

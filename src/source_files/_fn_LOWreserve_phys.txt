@@ -1,0 +1,34 @@
+; [bp + 8] ptr to free physical page bitfield
+; sets IM = physical address of found free page
+; clobbers JX KX IM
+.fn_LOWreserve_phys:
+    push bp
+    cpy sp,bp
+    
+    cpy [bp + 8], im
+
+    dec im
+.LOWreserve_phys_loop:             ;   find first byte that isn't 0xff
+    inc im
+    dsub.8 [im], 0xff
+    jzro [.LOWreserve_phys_loop]   ;   IM = address of it
+
+    cpy 0, jx
+    dec jx
+    cpy 0x100, kx
+.LOWreserve_phys_loop2:            ;   find first bit that is 0
+    bsr 1,kx
+    inc jx
+    dand.8 kx, [im]
+    jnzr [.LOWreserve_phys_loop2]  ;   JX = 0 for MSB ... 7 for LSB
+
+    orr.8 kx, [im]                 ;   set the bit, we're going to use this page
+
+    sub [bp + 8], im            ;   IM = byte offset of non-0xff from base
+    bsl 3, im                   ;   IM is worth 8 = 2^3 pages 
+    add jx, im
+    bsl 12, im
+
+    cpy bp,sp
+    pop bp
+    ret

@@ -1,0 +1,107 @@
+# 0x1000
+
+jump [.main]
+
+_fn_str.txt
+_fn_out.txt
+
+; Yes, I could optimise all of these push, call, pop by writing into memory
+; relative to stack pointer. But this way makes code rearrangement easier.
+
+.main:
+    setief
+    push $hello_init
+    genint 0x60             ;   print
+    pop zr
+
+    push 16
+    genint 0x42             ;   alloc
+    pop zr
+    cpy im,ax               ;   ax = input buffer
+    push 11
+    genint 0x42             ;   alloc
+    cpy im, [sp]            ;   [sp] = int to string buffer
+
+.infinite:  
+    push $prompt
+    genint 0x60             ;   print
+    pop zr
+
+    push ax
+    push 15
+    genint 0x61             ;   get
+    pop zr
+    pop zr
+
+    cpy zr, bx              ;   bx = accumulate result
+    cpy zr, cx              ;   cx = ptr
+    dec cx
+.readint:
+    inc cx
+    cpy.8 [ax + cx], dx
+    zrx.8 dx
+    dsub zr, dx
+    jzro [.readint_done]
+    mul 10, bx
+    add dx, bx
+    sub 48, bx
+    jump [.readint]
+
+.readint_done:
+    dsub 2,bx
+    jbel [.init_done]
+    cpy 1, cx               ;   cx = test num
+.main_prime:
+    inc cx
+
+    cpy cx, dx              ;   dx = checkers stop
+    bsr 1, dx
+    cpy 1, ex               ;   ex = checker
+.prime_checking:
+    inc ex
+    dsub dx,ex
+    jabv [.found_prime]
+    
+    push cx
+    div ex,cx
+    pop cx
+    dsub zr,im
+    jzro [.not_prime]
+    jump [.prime_checking]
+
+.found_prime:
+    push cx                 ;   [sp] was still int to string buffer
+    call [.fn_str_fromint]
+    pop cx
+    
+    cpy [sp], im
+    dec im
+.skipzeros:
+    inc im
+    dsub.8 48,[im]
+    jzro [.skipzeros]
+
+    push im
+    genint 0x60             ;   print
+    pop zr
+
+    push $space
+    genint 0x60             ;   print
+    pop zr
+
+.not_prime:
+    dsub cx,bx
+    jnzr [.main_prime]
+
+
+    jump [.infinite]
+
+.init_done:
+    push 1337
+    genint 0x41             ;   exit
+
+
+$hello_init "Hello from init!\n"
+$prompt "\n > "
+$newline "\n"
+$space " "

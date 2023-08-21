@@ -1,0 +1,65 @@
+; [bp + 12] ptr to string
+; [bp + 8] ptr to string
+; sets IM = 1 if match, 0 if different
+; clobbers IX JX KX IM
+.fn_strcmp:
+    push bp
+    cpy sp,bp
+    push 1 ; [bp - 4]
+
+    cpy [bp + 8], kx
+    cpy [bp + 12], jx
+    
+.strcmp_loop:
+    cpy.8 [kx], ix
+    cpy.8 [jx], im
+    inc kx
+    inc jx
+    zrx.8 ix
+    zrx.8 im
+    dsub ix,im           ;   if match, skip
+    jzro [.strcmp_skip]
+    cpy 0, [bp - 4]     ;   str not equal
+    jump [.strcmp_done]
+
+.strcmp_skip:
+    mul im, ix          ;   if neither is 0, keep comparing
+    jnzr [.strcmp_loop] ;   we're done if they've matched and are now 0
+.strcmp_done:
+    pop im              ;   we pushed this bool at the start
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 12] ptr to string buffer, 11 bytes
+; [bp + 8] uint
+; clobbers JX KX IM
+.fn_str_fromint:
+    push bp
+    cpy sp,bp
+    push bp
+    
+    cpy 2, jx
+    cpy [bp + 8], kx
+    cpy [bp + 12], bp       ;   string buf available at bp-11 to bp-1 incl
+    add 11, bp              ;   bodged in to avoid rewriting old func
+
+    .fromint_populate:
+        div 10,kx
+
+        add 48,im   ; bump it up to ascii nums
+        neg jx
+        cpy.8 im, [bp + jx]
+        neg jx
+
+        inc jx
+        dsub 11, jx
+        jboe [.fromint_populate]
+
+    cpy.8 0, [bp-1]
+    
+    pop bp
+    cpy bp,sp
+    pop bp
+    ret

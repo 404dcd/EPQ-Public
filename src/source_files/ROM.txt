@@ -1,0 +1,19 @@
+# 0x10
+
+    cpy 0x1000, bp  ;   temporary stack growing back from 0x1000
+    cpy bp, sp
+    wrivtr 0x1000   ;   place IVT in 0x1000
+    cpy .handle_disk, [0x1048]
+
+    setief
+    cpy 0x0, ax     ;   disk write first block to address 0x100
+    out 0x2, ax
+    cpy 0x100, ax
+    out 0x2, ax
+    hlt             ;   wait for it to finish then execute it
+
+    jump [0x100]
+
+
+.handle_disk:       ;   do nothing, but leave interrupts off
+    iret

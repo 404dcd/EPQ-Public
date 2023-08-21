@@ -1,0 +1,19 @@
+; [bp + 8] address
+; clobbers KX IM
+.fn_zeropage:
+    push bp
+    cpy sp,bp
+
+    cpy [bp + 8], im
+    and 0xfffff000, im      ;   page base address
+    cpy zr, kx
+    dec kx
+.zeropage_loop:
+    inc kx
+    cpy zr, [im + kx*4]
+    dsub 1023,kx
+    jnzr [.zeropage_loop]
+
+    cpy bp,sp
+    pop bp
+    ret

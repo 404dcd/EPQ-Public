@@ -1,0 +1,289 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[a4paper, top=2cm, bottom=2cm, left=4.7cm, right=1.8cm, heightrounded,
+marginparwidth=4.6cm, marginparsep=3mm]{geometry}
+\usepackage{marginnote}
+\usepackage{changepage}
+\usepackage{atbegshi}
+
+\newenvironment{entry}[2]{
+\filbreak
+  \parindent=0em
+
+  \reversemarginpar\marginnote{\textbf{#1}}
+  \textbf{#2}
+
+}{\medskip}
+
+\newcommand{\fl}[1]{\marginnote{\textit{#1}}}
+
+\AtBeginDocument{\addtocounter{page}{-1}\AtBeginShipoutNext{\AtBeginShipoutDiscard}}
+
+\title{\textbf{Development Log}}
+\author{github.com/404dcd}
+\date{2022-11-26}
+
+\begin{document}
+
+\begin{adjustwidth}{0cm}{2.5cm}
+\maketitle
+\end{adjustwidth} 
+
+\begin{entry}{Sun May 1}{Add plan}
+\fl{plan} completed first revision of plan
+\end{entry}
+
+\begin{entry}{Sun May 15}{Getting started with ISA design}
+\fl{bibliography} entered initial list of sources
+
+\fl{spec - ISA} documented initial parameter types, registers
+
+\fl{spec - CPU} virtual memory translation process
+
+\fl{spec - OS} filesystem, extensive virtual memory paging details
+\end{entry}
+
+\begin{entry}{Wed May 18}{Started work on opcodes and flags, do research}
+\fl{bibliography} update sources
+
+\fl{spec - ISA} core arithmetic, logical and branching instructions, arithmetic flags
+\end{entry}
+
+\begin{entry}{Sat May 21}{Rework addressing modes and registers with the addition of width-changing prefixes}
+\fl{spec - ISA} change parameter types to provide more useful options for iterating code, change registers to add more of them, added INC DEC SNX ZRX PUSH POP, added JXXX based on flag status, prefixes (to replace 8b 16b registers, which is a better way to do it on reflection)
+\end{entry}
+
+\begin{entry}{Sun May 22}{Add calling conventions and stack layout}
+\fl{spec - ISA} added PUSHR POPR CALL, added ZRF NGF flags
+
+\fl{spec - CPU} calling conventions for functions, function stack layout - this is mainly assembler details
+\end{entry}
+
+\begin{entry}{Sun May 29}{Finish detailing all instructions, add a couple}
+\fl{spec - ISA} added JUMP ASL RET NOP, completed first revision of detailed instruction behaviour (worded explanations, in addition to opcode table)
+\end{entry}
+
+\begin{entry}{Tue May 31}{More research}
+\fl{bibliography} update sources
+\end{entry}
+
+\begin{entry}{Sat Jun 4}{Tidies flags, adds special registers and instructions for them}
+\fl{plan} make plan more detailed by adding tasks for kernel features memory, keyboard, screen, disk, process creation
+
+\fl{spec - ISA} add special registers, add CPFLGR CPIVTR WRIVTR WRPDBR for those registers, add flags for those modes too (IEF, VMF)
+\end{entry}
+
+\begin{entry}{Sun Jun 5}{Adds some more instructions for ports and interrupts}
+\fl{spec - ISA} add SETIEF CLRIEF SETVMF CLRVMF for new flags enabling modes, add and explain INP OUT GENINT IRET LMA
+\end{entry}
+
+\begin{entry}{Mon Jun 6}{Details interrupts}
+\fl{spec - CPU} actions processor takes when interrupt is triggered, initial table of exceptions and interrupts from devices (this gets changed later)
+\end{entry}
+
+\begin{entry}{Fri Jun 10}{Details ports, lists IO devices, a synopsis for the memory controller}
+\fl{spec - CPU} list and detail hardware device ports, more memory controller behaviour
+\end{entry}
+
+\begin{entry}{Sat Jul 16}{first go at emulator but Rust is too restrictive, switching to C}
+\fl{emulator\_v1} initial and only commit for Rust attempt (got as far as reading instructions in, beginning loop and interpreting the opcode but found borrowing rules too strict and unworkable)
+\end{entry}
+
+\begin{entry}{Fri Jul 22}{emulator sprint (over past 3 days)}
+\fl{main.c} virtual memory translation mode, full parsing of instructions, execution for: flag setters, NOP, arithmetic instructions but not shifts, special register getting/setting operations. On the to-do list: PUSHes and POPs, returns, shifts, branches, ports, CALL, GENINT, interrupts
+\end{entry}
+
+\begin{entry}{Sat Jul 23}{basic emulator mostly done}
+\fl{main.c} bug fixes, execution for: PUSHes and POPs, returns, shifts, branches, CALL
+\end{entry}
+
+\begin{entry}{Sun Jul 24}{emulator and assembler running}
+\fl{assemble.py} implement the whole assembler except for strings, loading address etc directives - those coming later
+
+\fl{main.c} bug fixes (needed to add brackets for C's operation associativity)
+\end{entry}
+
+\begin{entry}{Thu Jul 28}{updates spec for what's been implemented}
+\fl{main.c} bug fixes, emulator now gives cycles executed stat at end
+
+\fl{plan} modify plan to document switching to C
+
+\fl{spec - CPU} swap source and destination order in instructions (this is more human-readable), some minor \emph{exceptions} to instruction restrictions (exceptions to destination not being immediate, a max one memory reference) added for specific instructions
+\end{entry}
+
+\begin{entry}{Fri Jul 29}{gets screen working}
+\fl{assemble.py} bug fixes
+
+\fl{main.c} start implementing OUT, spawn a window runner in another thread
+
+\fl{window.c} code to create X11 window, run its event loop, do direct memory access (transferring data) from CPU memory, but not yet handle keystrokes
+\end{entry}
+
+\begin{entry}{Tue Aug 2}{serial port, printing strings and numbers, implementing interrupts}
+\fl{assemble.py} bug fix, add directive for storing strings (realised it would be a nice to have)
+
+\fl{\_fn\_out.txt} function fn\_out\_str, function fn\_out\_uint (marks the start of the kernel/OS)
+
+\fl{main.c} some interrupt handling code (not complete), serial OUT text working, emulator execution for GENINT
+
+\fl{window.c} blank the screen until actually drawn to
+
+\fl{spec - CPU} remove double fault and tick exception/interrupt, use more relevant interrupts instead such as an address too large, continue to document how interrupts work, document serial out and display screen
+\end{entry}
+
+\begin{entry}{Sat Aug 6}{added go-style channels, interrupts working, IO ports working, keyboard implemented}
+\fl{channel.c} implemented handy go-style channels for use in emulator
+
+\fl{main.c} set up channels for keyboard and display IO, finish interrupt implementation, execution for INP
+
+\fl{window.c} sending keystrokes to main loop as interrupts
+
+\fl{spec - CPU} some minor adjustments for port buffers being modelled by channels, document the updated screen resolution
+\end{entry}
+
+\begin{entry}{Tue Aug 9}{proper ROM \textrightarrow{} BOOT \textrightarrow{} kernel loading, cleverer assembler, disk image creator}
+\fl{assemble.py} implement loading address directive and file inclusion, assembling multiple files
+
+\fl{channel.c} add blocking on channel until value ready
+
+\fl{disk.c} implement the whole disk device
+
+\fl{generate\_disk.py} implement tool to build disk image from directory of binary files
+
+\fl{main.c} run disk device as well, HLT now waits for interrupt if enabled rather than quitting, OUT finished
+
+\fl{BOOT.txt} bootloader that reads file system table, finds kernel, loads and jumps to it
+
+\fl{ROM.txt} ROM that loads first sector of disk and jumps to it
+
+\fl{\_fn\_str.txt} implement function fn\_strcmp, compares two strings
+
+\fl{kernel.txt} now decided syscalls. begin planning areas for data store
+
+\fl{\_handlers.txt} very simple keyboard handler, just prints to serial
+\end{entry}
+
+\begin{entry}{Wed Aug 10}{setting up page tables, turning on VM, kernel relocates to higher half}
+\fl{main.c} remove source type constraints on shifting operations
+
+\fl{\_fn\_freephys.txt} implement function fn\_freephys\_reserve, scans for free physical page from indicator bitfield
+
+\fl{kernel.txt} code to set up identity paging, turn on VM, then make the actual maps. not properly jumping there yet
+
+\fl{spec - ISA} remove source type constraints on shifts (they were just unnecessary and made shift instructions relatively useless)
+\end{entry}
+
+\begin{entry}{Fri Aug 12}{more mapping of memory kernel needs, first syscall}
+\fl{assemble.py} add relative loading address directive
+
+\fl{main.c} bug fix
+
+\fl{\_fn\_map.txt} implement function fn\_map\_man to add entries into page tables, fn\_map\_auto calls fn\_map\_man with an automatically found free page
+
+\fl{\_handlers.txt} default handlers for all exceptions
+
+\fl{\_syscalls.txt} implement syscall map
+
+\fl{kernel.txt} jump to higher half now, mapping some data storage pages, registering handlers and syscalls
+\end{entry}
+
+\begin{entry}{Fri Aug 19}{syscalls unmap, exit, spawn plus other tidy}
+\fl{\_fn\_disk.txt} implement functions fn\_disk\_find, fn\_disk\_read
+
+\fl{\_fn\_freephys.txt} implement function fn\_freephys\_makeavail, marks a physical address as available to use
+
+\fl{\_fn\_map.txt} implement function fn\_map\_free, removes a page mapping
+
+\fl{\_fn\_zeropage.txt} implement function fn\_zeropage, zeroes a given page
+
+\fl{\_handlers.txt} optimisation of default exception handlers that now kill the offending process, write handler for disk
+
+\fl{\_syscalls.txt} implement syscalls unmap, exit, spawn
+
+\fl{kernel.txt} more allocations of storage space, initialising memory for syscalls, etc
+
+\fl{renaming.txt} create list of instructions to be renamed, so that they more accurately reflect their function
+\end{entry}
+
+\begin{entry}{Wed Aug 24}{fix spawn and exit, load init, syscalls alloc free flen}
+\fl{generate\_disk.py} bug fix
+
+\fl{\_fn\_disk.txt} fix mis-implementation in fn\_disk\_read
+
+\fl{\_handlers.txt} bug fix
+
+\fl{\_syscalls.txt} bug fixing, implement syscalls alloc, free, flen, make a start on fread
+
+\fl{init.txt} hello world, this is a template for user mode process
+
+\fl{kernel.txt} more allocations of storage space + kernel spawns the init process now
+\end{entry}
+
+\begin{entry}{Fri Aug 26}{syscall fread, also working on custom font in photoshop}
+\fl{font.bmp} begin work on font
+
+\fl{\_syscalls.txt} finish implementing syscall fread
+
+\fl{kernel.txt} continue to add required setup for newly implemented syscalls
+\end{entry}
+
+\begin{entry}{Mon Aug 29}{added kernel display text driver}
+\fl{font.bmp} font completed
+
+\fl{\_fn\_display.txt} implement the whole ASCII text driver (several functions)
+
+\fl{\_fn\_map.txt} add function fn\_map\_translate
+
+\fl{kernel.txt} load font, other setup for running of text driver
+\end{entry}
+
+\begin{entry}{Thu Sep 1}{keypresses are translated to ASCII and drawn, fixed syscall fread and made print and get}
+\fl{generate\_keymap.py} this tool generates a keymap file
+
+\fl{\_fn\_display.txt} scroll screen lines (bubble) if the next line would go off the screen, bug fixes
+
+\fl{\_fn\_str.txt} implement function fn\_str\_fromint, generate string representation of integer
+
+\fl{\_handlers.txt} keypresses are now drawn to the screen
+
+\fl{\_syscalls.txt} bug fixes, implement syscalls print and get
+
+\fl{init.txt} simple echo program to test new syscalls
+
+\fl{kernel.txt} cleaning up, load the keymap
+\end{entry}
+
+\begin{entry}{Mon Sep 5}{Fixed syscall get and malloc, everything seems to work now}
+\fl{\_syscalls.txt} major bug fixing
+\end{entry}
+
+\begin{entry}{Sun Sep 11}{Renaming, Prime finder in userspace}
+\fl{\_fn\_out.txt} bug fixes
+
+\fl{\_fn\_str.txt} bug fixes
+
+\fl{init.txt} implement assembly program to find prime numbers less than the typed number, as the demo
+
+\fl{kernel.txt} allocates a separate ``string creation space'', which fixes some bugs
+
+\fl{*.txt} rename instructions following renaming.txt
+\end{entry}
+
+\begin{entry}{Wed Sep 14}{Completing various to-dos, including writing some specification. Fixed a syscall}
+\fl{\_syscalls.txt} bug fix, do the to-dos
+
+\fl{spec - CPU} document and specify disk device, keyboard device, initial ROM execution
+\end{entry}
+
+\begin{entry}{Mon Sep 19}{Document and specify kernel behaviour}
+\fl{spec - OS} document bootloader, kernel startup tasks, most syscalls
+\end{entry}
+
+\begin{entry}{Thu Sep 22}{Finish documenting syscalls, begin documenting assembler and emulator}
+\fl{spec - OS} document + specify remaining syscalls, assembly language syntax and start documenting the assembler tool
+\end{entry}
+
+\begin{entry}{Sat Sep 24}{Artefact finished}
+\fl{spec - OS} finish documenting assembler, completely document emulator, a finalised specification is complete
+\end{entry}
+
+\end{document}

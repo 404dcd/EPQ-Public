@@ -1,0 +1,523 @@
+; [sp + 8] virtual address
+; no return
+.syscall_map:
+    push jx     ;   +12
+    push kx     ;   +16
+    push im     ;   +20
+
+    push [sp + 20]
+    call [.fn_map_auto]
+    pop zr
+
+    pop im
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+
+; [sp + 8] virtual address
+; no return
+.syscall_unmap:
+    push jx     ;   +12
+    push kx     ;   +16
+    push im     ;   +20
+    
+    push [sp + 20]
+    call [.fn_zeropage]
+
+    call [.fn_map_free]
+    pop zr
+
+    push im
+    call [.fn_freephys_makeavail]
+    pop zr
+
+    pop im
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+
+; [sp + 8] return code
+; no return
+.syscall_exit:
+    cpy [sp + 8], ax            ;   ax = return code
+    cpy 0xC0420000, bp          ;   switch to a kernel stack
+    cpy bp, sp
+
+    cpy zr, bx
+    dec bx
+.exit_pagedir_loop:             ;   loop over PDEs
+    inc bx
+    cpy [0xfffff000 + zr + bx*4], hx        ;   11111111 11|111111 1111| [  index bx  ]
+    dsub zr,hx
+    jzro [.exit_pagedir_skip]
+    bsl 12, bx
+
+    cpy zr, cx
+    dec cx
+    .exit_pagetab_loop:                     ;   loop over PTEs
+        inc cx
+        cpy [0xffc00000 + bx + cx*4], dx    ;   11111111 11| [  bx  ] | [  index cx  ]
+        dsub zr,dx
+        jzro [.exit_pagetab_skip]
+
+        ; HERE, bx=PDE cx=PTE and is mapped.
+        cpy cx, jx
+        bsl 2, jx
+        add bx, jx
+        bsl 10, jx
+        push jx
+        call [.fn_zeropage]
+        pop zr
+        push dx                             ;   dx is still physical address of page we 0-tested
+        call [.fn_freephys_makeavail]
+        pop zr
+
+    .exit_pagetab_skip:
+        dsub 1022,cx                        ;   stop after 1022 as 1023 is recursive
+        jnzr [.exit_pagetab_loop]
+    
+    lma [bx + 0xffc00000], jx               ;   zero the PT
+    push jx
+    call [.fn_zeropage]
+    pop zr
+    push hx                                 ;   hx is still physical address of PT we 0-tested
+    call [.fn_freephys_makeavail]
+    pop zr
+
+    bsr 12, bx
+.exit_pagedir_skip
+    dsub 0x2ff,bx               ;   stop after last PDE for user-mode memory
+    jnzr [.exit_pagedir_loop]
+
+    cpy [0xfffffffc], bx        ;   bx = physical address of PD
+    cpy [0xC0440000], cx        ;   cx = proc stack ptr
+
+    ; -- SWITCH MEMORY but stay on kernel stack for now -- 
+    wrpdbr [cx]
+    
+    push 0xC0404000             ;   map, clear, unmap, free the old PD
+    push bx
+    call [.fn_map_man]
+    pop zr
+    call [.fn_zeropage]
+    call [.fn_map_free]
+    cpy im, [sp]
+    call [.fn_freephys_makeavail]
+    pop zr
+
+    cpy [cx+4], [0xC0440004]    ;   heap next free
+    cpy [cx+8], sp
+    cpy [cx+12], bp
+    sub 16, [0xC0440000]
+
+    cpy ax, im
+    setief
+    iret            ;   this acts as an IRET from syscall_spawn
+
+
+
+; [sp + 8] ptr to filename
+; clobbers EVERYTHING except SP, BP, IP
+; sets IM to exit code
+.syscall_spawn:
+    cpy [sp + 8], ax
+    cpy zr, bx                  ;   BODGE: copy string to our own memory
+    dec bx
+.spawn_hacky_strcpy:
+    inc bx
+    cpy.8 [ax + bx], cx
+    zrx.8 cx
+    dsub zr,cx
+    jzro [.spawn_hacky_done]
+
+    cpy.8 cx, [bx + 0xC0412000]
+    jump [.spawn_hacky_strcpy]
+.spawn_hacky_done:
+    cpy 0xC0412000, ax
+
+    ; -------- SAVE CUR PROC STATE --------
+
+    add 16, [0xC0440000]        ;   proc stack ptr
+    cpy [0xC0440000], cx
+    cpy [0xfffffffc], [cx]      ;   save PDBR
+    cpy [0xC0440004], [cx+4]    ;   save heap next free
+    cpy sp, [cx+8]
+    cpy bp, [cx+12]
+
+    cpy 0xC0420000, bp          ;   switch to a kernel stack
+    cpy bp, sp 
+    
+    ; -------- SET UP PD --------
+
+    push 0xC0405000         ;   make new PD
+    call [.fn_map_auto]
+    cpy im, bx              ;   bx = physical address
+    cpy [0xfffffc00], [0xC0405C00]  ;   11111111 11|111111 1111|1100 00000000 kernel PD[0]
+    cpy [0xfffffc04], [0xC0405C04]  ;   11111111 11|111111 1111|1100 00000100 kernel PD[1]
+    cpy bx, [0xC0405FFC]    ;   recursive map
+    call [.fn_map_free]
+    pop zr
+
+    ; -------- SWITCH ADDR SPACE, ALLOC STACK --------
+    wrpdbr bx
+
+    push 0xBFFFF000
+.allocate_stack:
+    sub 0x1000, [sp]
+    call [.fn_map_auto]
+    dsub 0xBFFF0000, [sp]
+    jnzr [.allocate_stack]
+    pop zr
+
+    push 0x00400000
+    cpy [sp], [0xC0440004]      ;   start heap
+    call [.fn_map_auto]         ;   and allocate first page (it'll do the rest itself)
+    pop zr 
+
+
+    ; -------- FIND FILENAME --------
+
+    push ax
+    call [.fn_disk_find]
+    pop zr
+    dsub zr,im
+    jzro [.spawn_error]
+
+    ; -------- LOAD CODE --------
+
+    cpy [im+24], ax             ;   ax = start block
+    cpy [im+28], bx
+    add 511,bx                  ;   ceiling division
+    div 512,bx                  ;   bx = num blocks
+    cpy bx,cx
+    add 3,cx                    ;   ceiling division
+    div 4,cx                    ;   cx = num pages
+    bsl 12,cx                   ;   if we start at page 1, need to do #cx, we end after page cx
+
+    push 0x00001000
+    sub 0x1000, [sp]
+.allocate_code:
+    add 0x1000, [sp]
+    call [.fn_map_auto]
+    dsub cx, [sp]
+    jnzr [.allocate_code]
+    pop zr
+
+    push 0x00001000
+    push bx
+    push ax
+    call [.fn_disk_read]
+
+
+    cpy 0xBFFFF000, bp
+    cpy bp, sp
+    setief
+    jump [0x1000]
+
+.spawn_error:
+    wrpdbr [cx]
+    cpy [cx+4], [0xC0440004]
+    cpy [cx+8], sp
+    cpy [cx+12], bp
+    sub 16, [0xC0440000]
+    cpy zr,im
+    dec im
+    setief
+    iret
+
+
+
+; [sp + 8] number of bytes
+; sets IM = pointer
+.syscall_alloc:
+    push jx     ;   +12
+    push kx     ;   +16
+    
+    cpy [0xC0440004], im        ;   im = byte to write
+    cpy im, kx
+    add [sp + 16], kx
+    dec kx                      ;   kx = end after
+    add 4,kx    ;   for header length
+    
+    push im
+    push kx
+    and 0xffff000, im
+    and 0xffff000, kx
+
+    sub 0x1000, im
+.ensure_mapped_loop:
+    add 0x1000, im
+    cpy im, jx
+    bsr 10, jx
+    add 0xffc00000, jx
+    dsub zr,[jx]
+    jnzr [.ensure_mapped_skip]
+
+    push im
+    call [.fn_map_auto]
+    pop zr
+
+.ensure_mapped_skip:
+    dsub kx,im
+    jnzr [.ensure_mapped_loop]
+
+    pop kx
+    pop im
+
+    cpy [sp + 16], [im]         ;   write header length
+    add 4, im
+
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+
+; [sp + 8] ptr
+.syscall_free:
+    push jx     ;   +12
+    push kx     ;   +16
+    
+    cpy [sp + 8], im        ;   im = byte to clear
+    sub 4, im
+    cpy [im], kx
+    add [sp + 8], kx
+    dec kx                  ;   kx = stop after
+    
+    dec im
+.freeing_loop:
+    inc im
+    cpy.8 zr, [im]
+    dsub kx,im
+    jnzr [.freeing_loop]
+
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+
+; [sp + 8] filename string ptr
+; sets IM = num bytes
+.syscall_flen:
+    push jx     ;   +12
+    push kx     ;   +16
+    
+    push [sp + 16]
+    call [.fn_disk_find]
+    pop zr
+    dsub zr,im
+    jzro [.flen_no_file]
+
+    cpy [im+28], im
+    pop kx
+    pop jx
+    setief
+    iret
+
+.flen_no_file
+    cpy zr,im
+    pop kx
+    pop jx
+    setief
+    iret
+
+
+
+; [sp + 16] num bytes int
+; [sp + 12] filename string ptr
+; [sp + 8] buffer ptr
+; sets IM = num bytes read
+.syscall_fread:
+    push ix     ;   +4
+    push jx     ;   +8
+    push kx     ;   +12
+    
+    push [sp + 24]              ;   filename string ptr
+    call [.fn_disk_find]
+    pop zr
+    dsub zr,im
+    jzro [.fread_no_file]
+
+    cpy [im+24], jx             ;   jx = start block
+    cpy [im+28], kx             ;   kx = min(num bytes, flen)
+    dsub [sp + 28], kx          ;   num bytes int
+    jboe [.fread_dont_change]
+    cpy [sp + 28], kx           ;   num bytes int
+.fread_dont_change:
+    push kx                     ;   save for later, LOC [sp+20] but now +16
+    
+    div 512, kx                 ;   kx = full blocks to read
+    add jx, kx
+    dec kx
+    push kx                     ;   stop after block, LOC [sp+16], +20
+    push [sp + 28]              ;   buffer ptr -> cpy address, LOC [sp+12]
+
+    push 0xC0407000             ;   kernel disk read buffer, LOC [sp+8]
+    push 1                      ;   read 1 block, LOC [sp+4]
+    push jx                     ;   block to read, LOC [sp]
+
+    ; check if we should even read a whole block
+    cpy [sp+16], im         ;   stop after
+    dsub [sp], im           ;   next to read
+    jbel [.fread_leftovers]
+
+    dec [sp]
+    sub 512, [sp+12]
+.fread_whole_block_loop:
+    inc [sp]
+    add 512, [sp+12]
+    call [.fn_disk_read]
+
+    ; write 512 bytes from 0xC0407000 to [sp+12]
+    cpy [sp+12], im
+    cpy zr, jx
+    dec jx
+    .fread_whole_copy:
+        inc jx
+        cpy.8 [jx+0xC0407000], [im+jx]
+        dsub 511,jx
+        jnzr [.fread_whole_copy]
+    
+    cpy [sp], im
+    dsub [sp+16],im
+    jnzr [.fread_whole_block_loop]
+
+    inc [sp]
+    add 512, [sp+12]
+
+.fread_leftovers:
+    cpy [sp+20], jx
+    div 512, jx         ;   kx = im = leftover
+    cpy im, kx
+    dsub zr,kx          ;   quit if none left
+    jzro [.fread_done]
+
+    ; otherwise we need to read #kx more
+    push kx
+    push [sp+12]
+    push [sp+12]
+    push [sp+12]
+    call [.fn_disk_read]
+    pop zr
+    pop zr
+    pop zr
+    pop kx
+    
+    ; write #kx bytes from 0xC0407000 to [sp+12]
+    dec kx
+    cpy [sp+12], im
+    cpy zr, jx
+    dec jx
+    .fread_whole_copy2:
+        inc jx
+        cpy.8 [jx+0xC0407000], [im+jx]
+        dsub kx,jx
+        jnzr [.fread_whole_copy2]
+
+.fread_done:
+    cpy [sp+20], im
+    add 24, sp
+    pop kx
+    pop jx
+    pop ix
+    setief
+    iret
+
+.fread_no_file:
+    cpy zr,im
+    pop kx
+    pop jx
+    pop ix
+    setief
+    iret
+
+
+
+; [sp + 8] string ptr
+.syscall_print:
+    push ax             ;   +4
+    push bx             ;   +8
+    push jx             ;   +12
+    push kx             ;   +16
+    push im             ;   +20
+    
+    cpy [sp + 28], ax
+.print_loop:
+    cpy.8 [ax], bx
+    zrx.8 bx
+    dsub zr,bx
+    jzro [.print_done]
+
+    push bx
+    call [.fn_display_pchar]
+    pop zr
+    inc ax
+    jump [.print_loop]
+
+.print_done:
+    pop im
+    pop kx
+    pop jx
+    pop bx
+    pop ax
+    setief
+    iret
+
+
+
+; [sp + 12] buffer ptr
+; [sp + 8] num bytes int
+; no return
+.syscall_get:
+    push jx     ;   +4
+    push kx     ;   +8
+    push im     ;   +12
+
+    cpy .get_newline_hook, [0xC0440018]     ;   register newline jump hook
+
+    setief
+.get_indef_loop:
+    hlt         ;   wait for keypress
+    jump [.get_indef_loop]
+
+.get_newline_hook:
+    cpy zr, [0xC0440018]                    ;   deregister newline jump hook
+    pop im                                  ;   simulate returning from handler NOT syscall
+    pop kx
+    pop jx
+    pop zr                                  ;   useless IP
+    pop zr                                  ;   useless FLGR
+    setief
+
+    cpy zr,im
+    cpy [sp + 24], kx
+    dec im
+.get_copying:
+    inc im
+    cpy.8 [im + 0xC0411000], [im + kx]
+    
+    dsub [0xC0440014], im               ;   reached and written first zero
+    jzro [.get_copying_leave]
+    
+    dsub [sp + 20], im
+    jnzr [.get_copying]
+    cpy.8 zr, [im + kx]                 ;   null terminate if too long
+
+.get_copying_leave:
+    cpy zr,[0xC0440014]         ;   clear buffer when done
+    cpy.8 zr, [0xC0411000]
+
+    pop im
+    pop kx
+    pop jx
+    setief
+    iret

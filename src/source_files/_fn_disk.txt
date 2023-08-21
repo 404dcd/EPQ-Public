@@ -1,0 +1,71 @@
+; [bp + 8] filename ptr
+; clobbers KX IM
+; sets IM to file object address or 0
+.fn_disk_find:
+    push bp
+    cpy sp,bp
+
+    cpy 0xC0406000, kx
+    push [bp + 8]
+    sub 32,kx
+.disk_find_loop:
+    add 32,kx
+    dsub 0xC0406200, kx  ;   don't access this, it's the 17th entry which don't exist
+    jzro [.disk_find_unsuccessful]
+
+    push kx
+    call [.fn_strcmp]   ;   im = bool
+    pop kx
+    dsub zr,im
+    jzro [.disk_find_loop]
+
+    ; here search was successful, [kx] has been found
+    cpy kx, im
+    cpy bp,sp
+    pop bp
+    ret
+
+.disk_find_unsuccessful:
+    cpy zr, im
+    cpy bp,sp
+    pop bp
+    ret
+
+; [bp + 16] destination ptr
+; [bp + 12] num blocks
+; [bp + 8] start block
+; clobbers IX JX KX IM
+; clears IEF
+.fn_disk_read:
+    push bp
+    cpy sp,bp
+
+    cpy [bp + 16], jx   ;   jx = writing addr
+    cpy [bp + 8], im    ;   im = block to read
+    push im             ;   [bp - 4] = stop after
+    cpy [bp + 12], kx
+    add kx, [bp - 4]
+    dec [bp - 4]
+    dec im
+.disk_read_loop:
+    inc im
+
+    push im             ;   translate virtual jx to physical kx
+    push jx
+    call [.fn_map_translate]
+    pop jx
+    cpy im,kx
+    pop im
+
+    out 0x2, im
+    setief
+    out 0x2, kx
+    hlt                 ;   wait for finish
+    clrief
+    add 512, jx
+    dsub [bp - 4],im
+    jnzr [.disk_read_loop]
+
+    cpy bp,sp
+    pop bp
+    ret

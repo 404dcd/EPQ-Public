@@ -1,0 +1,54 @@
+; sets IM = physical address of found free page
+; clobbers JX KX IM
+.fn_freephys_reserve:
+    push bp
+    cpy sp,bp
+    
+    cpy 0xC0420000, im
+
+    dec im
+.freephys_reserve_loop:             ;   find first byte that isn't 0xff
+    inc im
+    dsub.8 [im], 0xff
+    jzro [.freephys_reserve_loop]   ;   IM = address of it
+
+    cpy zr, jx
+    dec jx
+    cpy 0x100, kx
+.freephys_reserve_loop2:            ;   find first bit that is 0
+    bsr 1,kx
+    inc jx
+    dand.8 kx, [im]
+    jnzr [.freephys_reserve_loop2]  ;   JX = 0 for MSB ... 7 for LSB
+
+    orr.8 kx, [im]               ;   set the bit, we're going to use this page
+
+    sub 0xC0420000, im          ;   IM = byte offset of non-0xff from base
+    bsl 3, im                   ;   IM is worth 8 = 2^3 pages 
+    add jx, im
+    bsl 12, im
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 8] physical address
+; clobbers JX KX IM
+; sets IM to physical address
+.fn_freephys_makeavail:
+    push bp
+    cpy sp,bp
+
+    cpy [bp + 8], jx
+
+    div 8,jx                ;    mark [jx] as free: jx=byte im=bit
+    add 0xC0420000, jx
+    cpy 0x80, kx
+    bsr im, kx
+    not kx
+    and.8 kx, [jx]          ;   clear bit im of [jx]
+
+    cpy bp,sp
+    pop bp
+    ret

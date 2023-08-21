@@ -1,0 +1,40 @@
+; [bp + 8] ptr to string
+; clobbers JX KX IM
+.fn_out_str:
+    push bp
+    cpy sp,bp
+
+    cpy zr,kx
+    cpy zr,im
+    cpy [bp + 8], jx
+    .out_str_loop:
+        cpy.8 [jx + kx], im
+        dsub 0,im
+        jzro [.out_str_done]
+        out 1,im
+        inc kx
+        jump [.out_str_loop]
+.out_str_done:
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 8] uint32
+; clobbers JX KX IM
+.fn_out_uint:
+    push bp
+    cpy sp,bp
+    
+    push 0xC0412000             ;   string creation space
+    push [bp + 8]
+    call [.fn_str_fromint]
+    pop zr
+    
+    call [.fn_out_str]          ;   [sp] still string creation space
+    cpy 0x0a, im
+    out 1,im
+
+    cpy bp,sp
+    pop bp
+    ret

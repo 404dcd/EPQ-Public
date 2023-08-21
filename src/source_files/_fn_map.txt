@@ -1,0 +1,95 @@
+; [bp + 12] virtual address
+; [bp + 8] physical address
+; clobbers JX KX IM
+.fn_map_man:
+    push bp
+    cpy sp,bp
+    
+    cpy [bp + 12], kx
+    bsr 22, kx                          ;   kx = index in PD
+    cpy [0xfffff000 + zr + kx*4], jx    ;   11111111 11|111111 1111| [  index kx  ]
+    dsub zr,jx
+    jnzr [.map_fn_dopagetbl]
+
+    push kx
+    call [.fn_freephys_reserve]             ;   alloc new PT
+    pop kx
+    cpy im, [0xfffff000 + zr + kx*4]
+    bsl 12, kx
+    cpy im, [kx + 0xffc00ffc]    ;   11111111 11| [  kx  ] |1111 11111100 recursive map
+    bsr 12, kx
+
+.map_fn_dopagetbl:
+    bsl 12, kx
+    cpy [bp + 12], jx
+    bsr 12, jx                              ;   00000000 0000[10 bits PDE][10 bits PTE]
+    and 0x3ff, jx                           ;   keep last 10 bits
+    
+    cpy [bp + 8], [0xffc00000 + kx + jx*4]  ;   11111111 11| [  kx  ] | [  index jx  ]
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 8] virtual address
+; clobbers JX KX IM
+; sets IM to physical address
+.fn_map_auto:
+    push bp
+    cpy sp,bp
+
+    push [bp + 8]
+    call [.fn_freephys_reserve]
+    push im
+    call [.fn_map_man]
+
+    pop im
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 8] virtual address
+; clobbers JX KX IM
+; sets IM to physical address
+.fn_map_free:
+    push bp
+    cpy sp,bp
+    
+    cpy [bp + 8], kx
+    bsr 22,kx               ;   kx, jx set for PDE, PTE in same way as above
+    bsl 12,kx
+    cpy [bp + 8], jx
+    bsr 12, jx
+    and 0x3ff, jx
+
+    cpy [0xffc00000 + kx + jx*4], im
+    cpy zr, [0xffc00000 + kx + jx*4]  ;   11111111 11| [  kx  ] | [  index jx  ]
+
+    cpy bp,sp
+    pop bp
+    ret
+
+
+; [bp + 8] virtual address
+; clobbers IM
+; sets IM to physical address
+.fn_map_translate:
+    push bp
+    cpy sp,bp
+
+    cpy [bp + 8],im
+    bsr 12, im
+    bsl 2, im
+    orr 0xffc00000, im       ;   11111111 11| [  PDE  ] | [  PTE  ]00
+    push [im]               ;   [bp-4] = phys page addr
+    cpy [bp + 8],im
+    and 0xfff, im
+    add im,[bp-4]           ;   [bp-4] = phys addr
+    pop im
+
+    cpy bp,sp
+    pop bp
+    ret

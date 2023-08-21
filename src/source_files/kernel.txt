@@ -1,0 +1,334 @@
+; @@@@@@@@ @@ PD
+;            @@@@@@ @@@@ PT
+;                       @@@@ @@@@@@@@ PAGE
+
+; 00000000 00000000 00010000 00000000       00001000 user code
+; 00000000 01000000 00000000 00000000       00400000 start of heap
+; ...
+; 10111111 11111111 11110000 00000000       BFFFF000 initial user stack pointer
+; 11000000 00000000 00000000 00000000       C0000000 0  kernel code, service routines, functions
+; 11000000 01000000 00000000 00000000       C0400000 0  frame buffer 0
+; 11000000 01000000 00010000 00000000       C0401000 1  frame buffer 1
+; 11000000 01000000 00100000 00000000       C0402000 2  process metadata stack
+; 11000000 01000000 00110000 00000000       C0403000 3  IVT (physical 0x1000)
+; 11000000 01000000 01000000 00000000       C0404000 4  temporarily mapped during exit()
+; 11000000 01000000 01010000 00000000       C0405000 5  temporarily mapped during spawn()
+; 11000000 01000000 01100000 00000000       C0406000 6  file system table
+; 11000000 01000000 01110000 00000000       C0407000 7  kernel disk read buffer
+; 11000000 01000000 10000000 00000000       C0408000 8  font (should be no more than 2 pages)
+; 11000000 01000001 00000000 00000000       C0410000 16 keymap
+; 11000000 01000001 00010000 00000000       C0411000 17 string input buffer
+; 11000000 01000001 00100000 00000000       C0412000 18 string creation space
+; 11000000 01000001 11100000 00000000       C041E000 30 kernel main stack (pointer initially C041F000)
+; 11000000 01000001 11110000 00000000       C041F000 31 kernel interrupt stack (pointer initially C0420000)
+; 11000000 01000010 00000000 00000000       C0420000 32 free physical page table 0
+; ...
+; 11000000 01000011 11110000 00000000       C043F000 63 free physical page table 31
+; 11000000 01000100 00000000 00000000       C0440000 64 variables
+
+; 40 spawn (str* filename) - make new process running file RET int (exit code)
+; 41 exit (int code) - terminate current process with code
+; 42 alloc (int bytes) - allocates that many bytes on heap
+; 43 free (void* address) - frees the memory at address (must've been alloced)
+; 44 map (void* address) - maps given address to a zeroed free page
+; 45 unmap (void* address) - gives up the mapping from the given address
+
+; 60 print (str* text) - writes text to screen
+; 61 get (str* buffer, int n) - get at most n chars from user into buffer, waits for newline, null term, buffer should be n+1
+; 62 flen (str* filename) - RET length of file in bytes or 0
+; 63 fread (void* buffer, str* filename, int n) reads at most n bytes from file into buffer, RET however many were read
+
+
+# 0x2000
+
+clrief
+jump [.main]
+
+_fn_LOWreserve_phys.txt
+
+.main:
+    ; ------------------ SET UP IDENTITY PAGING ------------------
+    cpy $last_kbyte, ax
+    sub 0xBFFFE000, ax
+    add 4095,ax
+    div 4096,ax
+    mul 4096,ax
+    cpy ax,ex               ;   ex = free page indicator addr, ex + 4096 = new stack
+
+    add 8192,ax             ;   ax = PD
+
+    wrpdbr ax
+    cpy ax, [ax + 4092]     ;   recursive last entry
+    cpy ax,bx
+    add 4096,bx             ;   bx = PT
+    cpy bx, [bx + 4092]     ;   recursive last entry
+    cpy bx, [ax]            ;   PD[0] -> PT
+
+    lma [ex+4096], fx
+    cpy 0x2000,cx           ;   cx = iterator 0x2000, ..., fx
+    sub 4096,cx
+.identity_map_loop:
+    add 4096,cx
+    cpy cx,dx
+    bsr 12,dx               ;   page number
+    cpy cx, [bx + dx*4]     ;   PT[dx] = cx
+    dsub cx,fx
+    jnzr [.identity_map_loop]
+
+
+    cpy bx,ax               ;   bx is last written page
+    div 4096,ax
+    inc ax
+    div 8,ax                ;   ax = number of 0xffs, im = number of bits leftover
+
+    cpy zr, cx               ;   cx = iterator 0, ..., ax-1
+.fill_free_loop:
+    dsub ax,cx
+    jzro [.fill_free_done]
+    cpy.8 0xff, [ex + cx]
+    inc cx
+    jump [.fill_free_loop]
+
+.fill_free_done:
+    cpy 8, dx
+    sub im, dx
+    cpy.8 0xff, ax
+    bsl.8 dx, ax
+    cpy.8 ax, [ex + cx]
+
+    setvmf
+
+    ; ------------------ PAGE CODE INTO C0000000 AND JUMP ------------------
+
+    cpy ex, bp
+    add 8192, bp            ;   new temporary stack growing back into page ex+4096
+    cpy bp, sp
+    push ex
+    call [.fn_LOWreserve_phys]
+    cpy im, [0xfffffc00]    ;   11111111 11|111111 1111|1100 00000000 make PT for C00
+    cpy im, [0xfff00ffc]    ;   11111111 11|110000 0000|1111 11111100 recursive map
+    call [.fn_LOWreserve_phys]
+    cpy im, [0xfffffc04]    ;   11111111 11|111111 1111|1100 00000100 make PT for C04
+    cpy im, [0xfff01ffc]    ;   11111111 11|110000 0001|1111 11111100 recursive map
+
+    ; kernel code pages are in 0x2000 -> ex-4096 inclusive
+    sub 4096, ex
+    cpy 0xfff00000, cx      ;   11111111 11|110000 0000|0000 00000000 cx = PT base
+    cpy 0x2000, ax
+    sub 4096, ax
+.proper_map_loop:
+    add 4096, ax
+    cpy ax,bx
+    bsr 12,bx               ;   page number
+    sub 2, bx               ;   mapping from C0000000 not C0002000
+    cpy ax, [cx + bx*4]     ;   PT[bx] = ax
+    dsub ax,ex
+    jnzr [.proper_map_loop]
+
+    jump [.in_higher_half]
+
+
+    ; ------------------ SET UP OTHER KERNEL PAGE MAPS ------------------
+
+#+ 0xBFFFE000
+
+_fn_disk.txt
+_fn_display.txt
+_fn_freephys.txt
+_fn_map.txt
+_fn_out.txt
+_fn_str.txt
+_fn_zeropage.txt
+
+_handlers.txt
+_syscalls.txt
+
+.in_higher_half:
+    pop im                  ;   get the physical free page field back
+    push 0xC0420000
+    push im
+    call [.fn_map_man]          ;   map the first, can map_auto the rest
+    pop zr
+
+.map_physicalfree_loop:
+    add 4096,[sp]
+    call [.fn_map_auto]
+    dsub 0xC0440000,[sp]              ;   stop after variable page
+    jnzr [.map_physicalfree_loop]
+
+    cpy 0xC0400000, [sp]
+    call [.fn_map_auto]     ;   frame buf 0
+    
+    cpy 0xC0401000, [sp]
+    call [.fn_map_auto]     ;   frame buf 1
+
+    cpy 0xC0402000, [sp]
+    call [.fn_map_auto]     ;   proc meta stack
+
+    cpy 0xC041F000, [sp]
+    call [.fn_map_auto]     ;   kernel interrupt stack
+
+    cpy 0xC0407000, [sp]
+    call [.fn_map_auto]     ;   kernel disk read buffer
+
+    cpy 0xC0410000, [sp]
+    call [.fn_map_auto]     ;   keymap
+    
+    cpy 0xC0411000, [sp]
+    call [.fn_map_auto]     ;   string input buffer
+
+    cpy 0xC0412000, [sp]
+    call [.fn_map_auto]     ;   string creation space
+
+    cpy 0xC0403000, [sp]
+    push 0x1000
+    call [.fn_map_man]      ;   IVT
+
+    cpy 0xC041E000, [sp+4]
+    cpy bp, [sp]
+    sub 0x100, [sp]
+    call [.fn_map_man]      ;   kernel main stack
+    cpy 0xC041F000, bp      ;   and use it
+    cpy bp, sp
+
+    ; ------------------ REMOVE OLD MAPS, SET UP STATE ------------------
+
+    ; old mappings are just in 0th PDE
+    cpy [0xffc00ffc], ax                ;   11111111 11|000000 0000|1111 11111100
+    push 0xffc00000    
+    call [.fn_zeropage]
+    pop zr
+    
+    push ax
+    call [.fn_freephys_makeavail]
+    pop zr
+
+    cpy 0xC0402000, [0xC0440000]    ;   0xC0440000 = proc stack ptr
+    cpy zr, [0xC0440004]            ;   0xC0440004 = heap next free
+    cpy zr, [0xC0440008]            ;   0xC0440008 = next char top left pixel index
+    cpy 0xC0400000, [0xC044000C]    ;   0xC044000C = current frame buffer
+    cpy zr, [0xC0440010]            ;   0xC0440010 = lastkey shift 0 or 1
+    cpy zr, [0xC0440014]            ;   0xC0440014 = first 0 of string input buffer
+    cpy zr, [0xC0440018]            ;   0xC0440018 = newline jump hook
+
+    cpy .handle_exc0, [0xC0403000]      ;   0x00
+    cpy .handle_exc1, [0xC0403004]      ;   0x01
+    cpy .handle_exc2, [0xC0403008]      ;   0x02
+    cpy .handle_exc3, [0xC040300C]      ;   0x03
+    cpy .handle_exc4, [0xC0403010]      ;   0x04
+    cpy .handle_exc5, [0xC0403014]      ;   0x05
+    cpy .handle_exc6, [0xC0403018]      ;   0x06
+    cpy .handle_int10, [0xC0403040]     ;   0x10
+    cpy .handle_int12, [0xC0403048]     ;   0x12
+    cpy .syscall_spawn, [0xC0403100]    ;   0x40
+    cpy .syscall_exit, [0xC0403104]     ;   0x41
+    cpy .syscall_alloc, [0xC0403108]    ;   0x42
+    cpy .syscall_free, [0xC040310C]     ;   0x43
+    cpy .syscall_map, [0xC0403110]      ;   0x44
+    cpy .syscall_unmap, [0xC0403114]    ;   0x45
+    cpy .syscall_print, [0xC0403180]    ;   0x60
+    cpy .syscall_get, [0xC0403184]      ;   0x61
+    cpy .syscall_flen, [0xC0403188]     ;   0x62
+    cpy .syscall_fread, [0xC040318C]    ;   0x63
+    
+    ; --- load FS table 0xC0406000 ---
+
+    push 0xC0406000
+    call [.fn_map_auto]             ;   im = physical address of space
+    pop zr
+    cpy 0x1, cx                     ;   disk write second block to physical [im]
+    out 0x2, cx
+    setief
+    out 0x2, im
+    hlt                             ;   wait for finish
+
+    ; --- load font 0xC0408000 ---
+
+    push $font_fname
+    call [.fn_disk_find]
+    pop zr
+    dsub zr, im
+    jnzr [.k_continue]
+
+    push $kernel_nofont
+    call [.fn_out_str]
+    pop zr
+    clrief
+    hlt
+
+.k_continue:
+    cpy [im+24], ax             ;   ax = start block
+    cpy [im+28], bx
+    add 511,bx                  ;   ceiling division
+    div 512,bx                  ;   bx = num blocks
+    cpy bx,cx
+    add 3,cx                    ;   ceiling division
+    div 4,cx                    ;   cx = num pages
+    bsl 12,cx
+    add 0xC0408000, cx
+    sub 0x1000, cx              ;   start at page 0xC0408000, need to do #cx so end after 0xC0408000+cx-one
+
+    push 0xC0408000
+    sub 0x1000, [sp]
+.allocate_font:
+    add 0x1000, [sp]
+    call [.fn_map_auto]
+    dsub cx, [sp]
+    jnzr [.allocate_font]
+    pop zr
+
+    push 0xC0408000
+    push bx
+    push ax
+    call [.fn_disk_read]
+
+    ; --- load keymap 0xC0410000 ---
+    push 4095
+    push $keymap_fname
+    push 0xC0410000
+    setief
+    genint 0x63
+    clrief
+    pop zr
+    pop zr
+    pop zr
+
+    dsub zr, im
+    jnzr [.k_continue2]
+
+    push $kernel_nokeymap
+    call [.fn_out_str]
+    pop zr
+
+.k_continue2:
+    ; ------------------ KERNEL READY ------------------
+    setief
+
+    push $init_fname
+    genint 0x40         ;   run until dead
+    pop zr
+
+    push im
+    push $kernel_quit
+    call [.fn_out_str]
+    pop zr
+    call [.fn_out_uint]
+    pop zr
+
+    clrief              ;   die
+    hlt
+
+
+.infinite:
+    setief
+    hlt
+    jump [.infinite]
+
+$hello_world "ABCD-----\nHello!\nAgain!"
+$init_fname "init"
+$font_fname "font"
+$keymap_fname "keymap"
+$kernel_quit "K: quitting -> init ended code "
+$kernel_nofont "K: no font file, quitting\n"
+$kernel_nokeymap "K: no keymap file, quitting\n"
+$last_kbyte ""
